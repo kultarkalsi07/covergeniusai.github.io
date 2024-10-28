@@ -1,12 +1,7 @@
+// api/generate.php
 <?php
 header('Content-Type: application/json');
-header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
-
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    exit(0);
-}
+require_once('../config.php');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -14,70 +9,76 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-// Read the raw POST data
-$json = file_get_contents('php://input');
-$data = json_decode($json, true);
+$data = json_decode(file_get_contents('php://input'), true);
 
-if (!$data || !isset($data['prompt'])) {
+if (!$data || !isset($data['userInfo']) || !isset($data['jobDescription'])) {
     http_response_code(400);
-    echo json_encode(['error' => 'Invalid request']);
+    echo json_encode(['error' => 'Invalid request data']);
     exit;
 }
 
-$apiKey = 'AIzaSyDhqMqdvA6HUy3AQ-1_9Rtc20jFIKSy2qw'; // Replace with your actual API key
-$apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
+$prompt = generatePrompt($data['userInfo'], $data['jobDescription']);
 
-// Initialize cURL session
-$ch = curl_init();
+$response = callGeminiAPI($prompt);
+echo json_encode($response);
 
-// Set cURL options
-curl_setopt_array($ch, [
-    CURLOPT_URL => $apiUrl . '?key=' . $apiKey,
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_POST => true,
-    CURLOPT_SSL_VERIFYPEER => true, // Enable SSL verification
-    CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
-    CURLOPT_POSTFIELDS => json_encode([
-        'contents' => [[
-            'parts' => [[
-                'text' => $data['prompt']
-            ]]
-        ]]
-    ])
-]);
+function generatePrompt($userInfo, $jobDescription) {
+    return "
+Please write a professional cover letter for a job application with the following details:
 
-// Execute cURL request
-$response = curl_exec($ch);
+APPLICANT INFORMATION:
+Name: {$userInfo['name']}
+Key Skills: {$userInfo['skills']}
+Relevant Experience: {$userInfo['experience']}
 
-// Check for cURL errors
-if (curl_errno($ch)) {
-    http_response_code(500);
-    echo json_encode(['error' => 'cURL error: ' . curl_error($ch)]);
+JOB DESCRIPTION:
+{$jobDescription}
+
+INSTRUCTIONS:
+1. Write a compelling cover letter that matches my skills and experience to the job requirements
+2. Use a professional but engaging tone
+3. Structure the letter with clear paragraphs:
+   - Opening paragraph introducing myself and stating the position I'm applying for
+   - 1-2 paragraphs highlighting relevant skills and experience
+   - Closing paragraph expressing interest in an interview
+4. Keep the length appropriate for a cover letter (around 300-400 words)
+5. Don't use generic phrases - make it specific to my background and the role
+6. Include a formal header with my name
+7. Use a professional sign-off";
+}
+
+function callGeminiAPI($prompt) {
+    $url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=' . GEMINI_API_KEY;
+    
+    $data = [
+        'contents' => [
+            [
+                'parts' => [
+                    ['text' => $prompt]
+                ]
+            ]
+        ]
+    ];
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json'
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
-    exit;
-}
 
-$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-curl_close($ch);
+    if ($httpCode !== 200) {
+        return ['error' => 'Failed to generate cover letter'];
+    }
 
-// Check HTTP response code
-if ($httpCode !== 200) {
-    http_response_code($httpCode);
-    echo json_encode(['error' => 'API request failed with status code: ' . $httpCode]);
-    exit;
+    $responseData = json_decode($response, true);
+    return [
+        'coverLetter' => $responseData['candidates'][0]['content']['parts'][0]['text']
+    ];
 }
-
-// Decode and validate response
-$result = json_decode($response, true);
-if (json_last_error() !== JSON_ERROR_NONE) {
-    http_response_code(500);
-    echo json_encode(['error' => 'Invalid JSON response from API']);
-    exit;
-}
-
-if (isset($result['candidates'][0]['content']['parts'][0]['text'])) {
-    echo json_encode(['coverLetter' => $result['candidates'][0]['content']['parts'][0]['text']]);
-} else {
-    http_response_code(500);
-    echo json_encode(['error' => 'Invalid response structure from AI service']);
-}
+?>
